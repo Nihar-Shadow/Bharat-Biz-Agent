@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Test</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+
+<body class="bg-gray-100">
+    <div id="root"></div>
+    <div id="debug" class="p-4 bg-yellow-100 border border-yellow-400 m-4">
+        <h2 class="font-bold">Debug Info:</h2>
+        <p>React loaded: <span id="react-status">Checking...</span></p>
+        <p>ReactDOM loaded: <span id="reactdom-status">Checking...</span></p>
+        <p>Babel loaded: <span id="babel-status">Checking...</span></p>
+    </div>
+
+    <script>
+        // Check if libraries loaded
+        document.getElementById('react-status').textContent = typeof React !== 'undefined' ? '✅ Yes' : '❌ No';
+        document.getElementById('reactdom-status').textContent = typeof ReactDOM !== 'undefined' ? '✅ Yes' : '❌ No';
+        document.getElementById('babel-status').textContent = typeof Babel !== 'undefined' ? '✅ Yes' : '❌ No';
+
+        console.log('React:', typeof React);
+        console.log('ReactDOM:', typeof ReactDOM);
+        console.log('Babel:', typeof Babel);
+    </script>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        function TestApp() {
+            const [count, setCount] = useState(0);
+
+            return (
+                <div className="max-w-4xl mx-auto p-8">
+                    <div className="bg-white rounded-lg shadow-lg p-8">
+                        <h1 className="text-3xl font-bold text-purple-600 mb-4">
+                            ✅ Dashboard Test Page
+                        </h1>
+                        <p className="text-gray-600 mb-4">
+                            If you can see this, React is working!
+                        </p>
+                        <div className="bg-blue-50 p-4 rounded-lg">
+                            <p className="text-lg mb-2">Counter Test:</p>
+                            <button
+                                onClick={() => setCount(count + 1)}
+                                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+                            >
+                                Count: {count}
+                            </button>
+                        </div>
+                        <div className="mt-6">
+                            <a
+                                href="/dashboard.html"
+                                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 inline-block"
+                            >
+                                Go to Full Dashboard
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        try {
+            ReactDOM.render(<TestApp />, document.getElementById('root'));
+            console.log('✅ React app rendered successfully!');
+        } catch (error) {
+            console.error('❌ Error rendering React app:', error);
+            document.getElementById('root').innerHTML = '<div class="p-4 bg-red-100 text-red-700">Error: ' + error.message + '</div>';
+        }
+    </script>
+</body>
+
+</html>

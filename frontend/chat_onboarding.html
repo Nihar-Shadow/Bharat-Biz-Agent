@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Udhaar.ai Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .slide-in {
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Typing dot animation */
+        .dot {
+            animation: pulse 1.4s infinite;
+        }
+
+        .dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 0.4;
+            }
+
+            50% {
+                opacity: 1;
+            }
+
+            100% {
+                opacity: 0.4;
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 h-screen flex flex-col justify-center items-center">
+
+    <div id="root" class="w-full h-full max-w-md bg-white shadow-xl flex flex-col overflow-hidden relative"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const API_BASE_URL = 'http://localhost:8000/api/v1';
+
+        function ChatApp() {
+            const [messages, setMessages] = useState([]);
+            const [input, setInput] = useState('');
+            const [customer, setCustomer] = useState(null);
+            const [onboardingState, setOnboardingState] = useState('NEW_USER'); // NEW_USER, ASK_NAME, ASK_PHONE, COMPLETED
+            const [tempData, setTempData] = useState({});
+            const [isTyping, setIsTyping] = useState(false);
+            const [isListening, setIsListening] = useState(false);
+            const [sessionId] = useState(() => Math.random().toString(36).substr(2, 9));
+
+            const toggleListening = () => {
+                if (isListening) {
+                    setIsListening(false);
+                    return;
+                }
+
+                if (!('webkitSpeechRecognition' in window)) {
+                    alert("Voice input is not supported in this browser. Please use Chrome.");
+                    return;
+                }
+
+                const recognition = new webkitSpeechRecognition();
+                recognition.continuous = false;
+                recognition.interimResults = false;
+                recognition.lang = 'en-IN'; // Optimized for Indian accent
+
+                recognition.onstart = () => setIsListening(true);
+                recognition.onend = () => setIsListening(false);
+                recognition.onresult = (event) => {
+                    const transcript = event.results[0][0].transcript;
+                    setInput(transcript); // Set text, user hits send
+                };
+                recognition.onerror = (e) => {
+                    console.error(e);
+                    setIsListening(false);
+                };
+
+                recognition.start();
+            };
+
+            const messagesEndRef = useRef(null);
+
+            // Auto-scroll
+            useEffect(() => {
+                messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            }, [messages, isTyping]);
+
+            // Init: Check local session or start onboarding
+            useEffect(() => {
+                const saved = localStorage.getItem('udhaar_customer');
+                if (saved) {
+                    const user = JSON.parse(saved);
+                    setCustomer(user);
+                    setOnboardingState('COMPLETED');
+                    addSystemMessage(`Welcome back, ${user.name}!`);
+                } else {
+                    startOnboarding();
+                }
+            }, []);
+
+            const startOnboarding = async () => {
+                await processOnboarding('');
+            };
+
+            const addSystemMessage = (text) => {
+                setMessages(prev => [...prev, { id: Date.now(), text, sender: 'bot' }]);
+            };
+
+            const addUserMessage = (text) => {
+                setMessages(prev => [...prev, { id: Date.now(), text, sender: 'user' }]);
+            };
+
+            const [activeOrderId, setActiveOrderId] = useState(null);
+
+            // New: Restore polling state
+            useEffect(() => {
+                const savedOrder = localStorage.getItem('activeOrderId');
+                if (savedOrder) setActiveOrderId(parseInt(savedOrder));
+            }, []);
+
+            // New: Polling Effect
+            useEffect(() => {
+                let interval;
+                if (activeOrderId) {
+                    const checkStatus = async () => {
+                        try {
+                            const res = await fetch(`${API_BASE_URL}/customer-chat/order/${activeOrderId}/status`);
+                            if (res.ok) {
+                                const data = await res.json();
+                                if (data.status && data.status.toLowerCase() === 'approved') {
+                                    setMessages(prev => [...prev, {
+                                        id: Date.now(),
+                                        text: `✅ **Order #${activeOrderId} Approved!**\n\nYour invoice is ready.`,
+                                        sender: 'bot',
+                                        data: { invoice_url: data.invoice_url }
+                                    }]);
+                                    setActiveOrderId(null);
+                                    localStorage.removeItem('activeOrderId');
+                                }
+                            }
+                        } catch (e) {
+                            console.error("Polling error", e);
+                        }
+                    };
+                    checkStatus();
+                    interval = setInterval(checkStatus, 3000);
+                }
+                return () => clearInterval(interval);
+            }, [activeOrderId]);
+
+            const processOnboarding = async (userMsg) => {
+                setIsTyping(true);
+                try {
+                    const res = await fetch(`${API_BASE_URL}/chat-onboarding/process`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            session_id: sessionId,
+                            message: userMsg,
+                            state: onboardingState,
+                            temp_data: tempData
+                        })
+                    });
+                    const data = await res.json();
+
+                    // Simulate delay natural feel
+                    setTimeout(() => {
+                        setIsTyping(false);
+                        addSystemMessage(data.message);
+                        setOnboardingState(data.next_state);
+                        setTempData(data.temp_data);
+
+                        if (data.user_data) {
+                            setCustomer(data.user_data);
+                            localStorage.setItem('udhaar_customer', JSON.stringify(data.user_data));
+                        }
+                    }, 800);
+
+                } catch (e) {
+                    setIsTyping(false);
+                    addSystemMessage("❌ Connection error. Retrying...");
+                }
+            };
+
+            const handleSend = async () => {
+                if (!input.trim()) return;
+                const text = input.trim();
+                addUserMessage(text);
+                setInput('');
+
+                if (onboardingState !== 'COMPLETED') {
+                    await processOnboarding(text);
+                } else {
+                    // Normal Chat Flow
+                    await processNormalMessage(text);
+                }
+            };
+
+            const processNormalMessage = async (text) => {
+                setIsTyping(true);
+                try {
+                    // Re-use existing customer message endpoint
+                    const res = await fetch(`${API_BASE_URL}/customer-chat/message`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ phone: customer.phone, message: text })
+                    });
+                    const data = await res.json();
+
+                    setTimeout(() => {
+                        setIsTyping(false);
+                        setMessages(prev => [...prev, {
+                            id: Date.now(),
+                            text: data.message,
+                            sender: 'bot',
+                            data: data.data // Keep invoice/order links if any
+                        }]);
+
+                        // Set active order ID for polling
+                        if (data.action_type === 'order_placed' && data.data && data.data.order_id) {
+                            setActiveOrderId(data.data.order_id);
+                            localStorage.setItem('activeOrderId', data.data.order_id);
+                        }
+                    }, 600);
+                } catch (e) {
+                    setIsTyping(false);
+                    addSystemMessage("❌ Error processing request.");
+                }
+            };
+
+            return (
+                <div className="flex flex-col h-full bg-white">
+                    {/* Header */}
+                    <div className="bg-blue-600 p-4 text-white shadow-md flex justify-between items-center z-10">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-white text-blue-600 rounded-full flex items-center justify-center font-bold text-lg">
+                                {customer ? customer.name[0] : '🤖'}
+                            </div>
+                            <div>
+                                <h1 className="font-bold text-lg leading-tight">Udhaar.ai</h1>
+                                <p className="text-xs text-blue-100 opacity-90">
+                                    {customer ? '● Online' : 'Onboarding...'}
+                                </p>
+                            </div>
+                        </div>
+                        {customer && (
+                            <button
+                                onClick={() => {
+                                    if (confirm("Logout?")) {
+                                        localStorage.removeItem('udhaar_customer');
+                                        window.location.reload();
+                                    }
+                                }}
+                                className="text-xs bg-blue-700 px-3 py-1 rounded hover:bg-blue-800 transition"
+                            >
+                                Logout
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Chat Area */}
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+                        {messages.map((msg, idx) => (
+                            <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'} slide-in`}>
+                                <div className={`max-w-[85%] rounded-2xl px-5 py-3 shadow-sm text-sm leading-relaxed ${msg.sender === 'user'
+                                    ? 'bg-blue-600 text-white rounded-br-none'
+                                    : 'bg-white text-gray-800 border border-gray-100 rounded-bl-none'
+                                    }`}>
+                                    <div className="whitespace-pre-wrap">{msg.text}</div>
+                                    {msg.data && msg.data.invoice_url && (
+                                        <a
+                                            href={msg.data.invoice_url.startsWith('http') ? msg.data.invoice_url : `http://localhost:8000${msg.data.invoice_url}`}
+                                            target="_blank"
+                                            className="block mt-3 bg-green-100 text-green-700 py-2 px-3 rounded text-center font-bold hover:bg-green-200"
+                                        >
+                                            📄 Download Invoice
+                                        </a>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+
+                        {isTyping && (
+                            <div className="flex justify-start slide-in">
+                                <div className="bg-white rounded-2xl px-4 py-3 shadow-sm border border-gray-100 rounded-bl-none">
+                                    <div className="flex space-x-1">
+                                        <div className="w-2 h-2 bg-gray-400 rounded-full dot"></div>
+                                        <div className="w-2 h-2 bg-gray-400 rounded-full dot"></div>
+                                        <div className="w-2 h-2 bg-gray-400 rounded-full dot"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        <div ref={messagesEndRef}></div>
+                    </div>
+
+                    {/* Input Area */}
+                    <div className="p-4 bg-white border-t border-gray-100 flex items-center gap-2">
+                        {/* Mic Button */}
+                        <button
+                            onClick={toggleListening}
+                            className={`p-3 rounded-full transition-all focus:outline-none ${isListening
+                                ? 'bg-red-500 text-white shadow-lg scale-110 animate-pulse'
+                                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                            title="Voice Input"
+                        >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+                            </svg>
+                        </button>
+
+                        <div className="flex-1 flex gap-2 items-center bg-gray-100 rounded-full px-4 py-2">
+                            <input
+                                type="text"
+                                value={input}
+                                onChange={(e) => setInput(e.target.value)}
+                                onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                                placeholder={onboardingState === 'ASK_PHONE' ? "Enter mobile number..." : "Type a message..."}
+                                className="flex-1 bg-transparent focus:outline-none text-gray-700 placeholder-gray-400"
+                                autoFocus
+                            />
+                            <button
+                                onClick={handleSend}
+                                disabled={!input.trim()}
+                                className={`p-2 rounded-full transition-all ${input.trim() ? 'bg-blue-600 text-white shadow-md transform hover:scale-105' : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                    }`}
+                            >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<ChatApp />, document.getElementById('root'));
+    </script>
+</body>
+
+</html>

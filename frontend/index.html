@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice-to-Order - AI Business Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .message-bubble {
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .typing-indicator span {
+            animation: blink 1.4s infinite;
+        }
+
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes blink {
+
+            0%,
+            60%,
+            100% {
+                opacity: 0.3;
+            }
+
+            30% {
+                opacity: 1;
+            }
+        }
+
+        .recording-pulse {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            50% {
+                transform: scale(1.1);
+                opacity: 0.8;
+            }
+        }
+
+        .wave-animation {
+            animation: wave 1s ease-in-out infinite;
+        }
+
+        @keyframes wave {
+
+            0%,
+            100% {
+                transform: scaleY(1);
+            }
+
+            50% {
+                transform: scaleY(1.5);
+            }
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 3px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // API Configuration
+        const API_BASE_URL = 'http://localhost:8000/api/v1';
+
+        function VoiceToOrderApp() {
+            const [messages, setMessages] = useState([
+                {
+                    id: 1,
+                    type: 'ai',
+                    text: 'Hello! 👋 I\'m your AI business assistant with voice support!\n\n🎤 **Voice Commands**: Click the microphone to speak\n💬 **Text Commands**: Type your message\n\nSupported languages:\n• English\n• Hindi (हिंदी)\n• Hinglish',
+                    timestamp: new Date(),
+                }
+            ]);
+            const [inputText, setInputText] = useState('');
+            const [isTyping, setIsTyping] = useState(false);
+            const [isRecording, setIsRecording] = useState(false);
+            const [isTranscribing, setIsTranscribing] = useState(false);
+            const [transcript, setTranscript] = useState('');
+            const [language, setLanguage] = useState('en-IN'); // Default to English (India)
+            const [micPermission, setMicPermission] = useState(null);
+            const [autoSend, setAutoSend] = useState(true); // Auto-send voice messages
+
+            const messagesEndRef = useRef(null);
+            const inputRef = useRef(null);
+            const recognitionRef = useRef(null);
+            const transcriptRef = useRef(''); // Track transcript with ref
+
+            // Auto-scroll to bottom
+            const scrollToBottom = () => {
+                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            };
+
+            useEffect(() => {
+                scrollToBottom();
+            }, [messages]);
+
+            // Load chat history from localStorage
+            useEffect(() => {
+                const savedMessages = localStorage.getItem('chatHistory');
+                if (savedMessages) {
+                    try {
+                        const parsed = JSON.parse(savedMessages);
+                        setMessages(parsed.map(msg => ({
+                            ...msg,
+                            timestamp: new Date(msg.timestamp)
+                        })));
+                    } catch (e) {
+                        console.error('Failed to load chat history:', e);
+                    }
+                }
+
+                // Load auto-send preference
+                const savedAutoSend = localStorage.getItem('autoSendVoice');
+                if (savedAutoSend !== null) {
+                    setAutoSend(savedAutoSend === 'true');
+                }
+            }, []);
+
+            // Save chat history to localStorage
+            useEffect(() => {
+                if (messages.length > 1) {
+                    localStorage.setItem('chatHistory', JSON.stringify(messages));
+                }
+            }, [messages]);
+
+            // Save auto-send preference
+            useEffect(() => {
+                localStorage.setItem('autoSendVoice', autoSend.toString());
+            }, [autoSend]);
+
+            // Poll for notifications
+            useEffect(() => {
+                const checkNotifications = async () => {
+                    try {
+                        const res = await fetch(`${API_BASE_URL}/vendor/notifications/`);
+                        if (res.ok) {
+                            const notifs = await res.json();
+                            // Filter for unread and display as chat bubbles
+                            if (notifs.length > 0) {
+                                notifs.forEach(async (n) => {
+                                    // Special handling for NEW_ORDER
+                                    // Robust check: Check type OR message content
+                                    const isOrder = n.type === 'NEW_ORDER' || (n.message && n.message.toLowerCase().includes('new order'));
+
+                                    // Extract ID if related_id is missing but it's an order
+                                    let orderId = n.related_id;
+                                    if (isOrder && !orderId) {
+                                        const match = n.message.match(/Order\s*#?\s*(\d+)/i);
+                                        if (match) orderId = parseInt(match[1]);
+                                    }
+
+                                    let messageText = `🔔 **NOTIFICATION**\n${n.message}`;
+                                    if (isOrder) {
+                                        messageText = `🔔 **NEW ORDER RECEIVED**\n${n.message}`;
+                                    } else if (n.type === 'LOW_STOCK') {
+                                        messageText = `⚠ **LOW STOCK ALERT**\n${n.message}`;
+                                    }
+
+                                    setMessages(prev => [...prev, {
+                                        id: Date.now() + Math.random(),
+                                        type: 'ai',
+                                        text: messageText,
+                                        timestamp: new Date(),
+                                        isActionable: isOrder && !!orderId,
+                                        actionData: (isOrder && orderId) ? { orderId: orderId, notifId: n.id } : null
+                                    }]);
+                                    // Mark as read immediately so we don't spam
+                                    await fetch(`${API_BASE_URL}/vendor/notifications/read`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ notification_id: n.id })
+                                    });
+                                });
+                            }
+                        }
+                    } catch (e) { console.error("Poll error", e); }
+                };
+
+                const interval = setInterval(checkNotifications, 3000); // 3 seconds poll
+                return () => clearInterval(interval);
+            }, []);
+
+            // Initialize Speech Recognition
+            useEffect(() => {
+                if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+                    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    recognitionRef.current = new SpeechRecognition();
+
+                    recognitionRef.current.continuous = false;
+                    recognitionRef.current.interimResults = true;
+                    recognitionRef.current.lang = language;
+
+                    recognitionRef.current.onstart = () => {
+                        setIsRecording(true);
+                        setTranscript('');
+                        transcriptRef.current = '';
+                    };
+
+                    recognitionRef.current.onresult = (event) => {
+                        let interimTranscript = '';
+                        let finalTranscript = '';
+
+                        for (let i = event.resultIndex; i < event.results.length; i++) {
+                            const transcript = event.results[i][0].transcript;
+                            if (event.results[i].isFinal) {
+                                finalTranscript += transcript + ' ';
+                            } else {
+                                interimTranscript += transcript;
+                            }
+                        }
+
+                        const currentTranscript = finalTranscript || interimTranscript;
+                        setTranscript(currentTranscript);
+                        transcriptRef.current = currentTranscript;
+                    };
+
+                    recognitionRef.current.onend = () => {
+                        setIsRecording(false);
+                        setIsTranscribing(false);
+
+                        // Use ref to get the latest transcript value
+                        const finalText = transcriptRef.current.trim();
+
+                        if (finalText) {
+                            setInputText(finalText);
+
+                            // Auto-send if enabled
+                            if (autoSend) {
+                                // Small delay to let state update
+                                setTimeout(() => {
+                                    sendMessage(finalText);
+                                }, 100);
+                            }
+                        }
+                    };
+
+                    recognitionRef.current.onerror = (event) => {
+                        setIsRecording(false);
+                        setIsTranscribing(false);
+
+                        let errorMessage = 'Voice recognition error';
+
+                        switch (event.error) {
+                            case 'no-speech':
+                                errorMessage = 'No speech detected. Please try again.';
+                                break;
+                            case 'audio-capture':
+                                errorMessage = 'Microphone not found. Please check your device.';
+                                break;
+                            case 'not-allowed':
+                                errorMessage = 'Microphone permission denied. Please allow microphone access.';
+                                setMicPermission('denied');
+                                break;
+                            case 'network':
+                                errorMessage = 'Network error. Please check your connection.';
+                                break;
+                            default:
+                                errorMessage = `Error: ${event.error}`;
+                        }
+
+                        const errorMsg = {
+                            id: Date.now(),
+                            type: 'ai',
+                            text: `🎤 ${errorMessage}`,
+                            timestamp: new Date(),
+                            isError: true,
+                        };
+                        setMessages(prev => [...prev, errorMsg]);
+                    };
+                } else {
+                    const errorMsg = {
+                        id: Date.now(),
+                        type: 'ai',
+                        text: '❌ Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.',
+                        timestamp: new Date(),
+                        isError: true,
+                    };
+                    setMessages(prev => [...prev, errorMsg]);
+                }
+            }, [language]);
+
+            // Update recognition language when changed
+            useEffect(() => {
+                if (recognitionRef.current) {
+                    recognitionRef.current.lang = language;
+                }
+            }, [language]);
+
+            const startRecording = async () => {
+                try {
+                    // Request microphone permission
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    stream.getTracks().forEach(track => track.stop()); // Stop the stream, we just needed permission
+
+                    setMicPermission('granted');
+                    setIsTranscribing(true);
+
+                    if (recognitionRef.current) {
+                        recognitionRef.current.start();
+                    }
+                } catch (error) {
+                    setMicPermission('denied');
+                    const errorMsg = {
+                        id: Date.now(),
+                        type: 'ai',
+                        text: '🎤 Microphone access denied. Please allow microphone permission in your browser settings.',
+                        timestamp: new Date(),
+                        isError: true,
+                    };
+                    setMessages(prev => [...prev, errorMsg]);
+                }
+            };
+
+            const stopRecording = () => {
+                if (recognitionRef.current) {
+                    recognitionRef.current.stop();
+                }
+            };
+
+            const sendMessage = async (text = inputText) => {
+                if (!text.trim()) return;
+
+                const userMessage = {
+                    id: Date.now(),
+                    type: 'user',
+                    text: text,
+                    timestamp: new Date(),
+                };
+
+                setMessages(prev => [...prev, userMessage]);
+                setInputText('');
+                setTranscript('');
+                setIsTyping(true);
+
+                try {
+                    const response = await fetch(`${API_BASE_URL}/ai/process`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ message: text }),
+                    });
+
+                    const data = await response.json();
+
+                    // Simulate typing delay
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+
+                    const aiMessage = {
+                        id: Date.now() + 1,
+                        type: 'ai',
+                        text: formatAIResponse(data),
+                        timestamp: new Date(),
+                        data: data,
+                    };
+
+                    setMessages(prev => [...prev, aiMessage]);
+                } catch (error) {
+                    const errorMessage = {
+                        id: Date.now() + 1,
+                        type: 'ai',
+                        text: '❌ Sorry, I couldn\'t process that. Make sure the backend server is running at http://localhost:8000',
+                        timestamp: new Date(),
+                        isError: true,
+                    };
+                    setMessages(prev => [...prev, errorMessage]);
+                } finally {
+                    setIsTyping(false);
+                }
+            };
+
+            const formatAIResponse = (data) => {
+                console.log("Full AI Response:", data); // Debug - see everything
+                const { intent, confidence, action_result } = data;
+
+                let response = '';
+
+                // Add intent and confidence
+                response += `🎯 **Intent**: ${intent}\n`;
+                response += `📊 **Confidence**: ${(confidence * 100).toFixed(0)}%\n\n`;
+
+                // Format action result
+                if (action_result) {
+                    console.log("Action Result:", action_result); // Debug
+                    const { status, message } = action_result;
+
+                    if (status === 'success') {
+                        response += `✅ **${message}**\n\n`;
+
+                        // Add specific details based on intent
+                        if (intent === 'create_order' && action_result.order_id) {
+                            response += `📦 Order Details:\n`;
+                            response += `• Order ID: #${action_result.order_id}\n`;
+                            response += `• Customer: ${action_result.customer}\n`;
+                            response += `• Product: ${action_result.product}\n`;
+                            response += `• Quantity: ${action_result.quantity}\n`;
+                            response += `• Total: ₹${action_result.total}\n`;
+                        } else if (intent === 'check_inventory' && action_result.product) {
+                            response += `📊 Stock Information:\n`;
+                            response += `• Product: ${action_result.product}\n`;
+                            response += `• Available: ${action_result.stock} units\n`;
+                            response += `• Price: ₹${action_result.price}\n`;
+                            response += `• Status: ${action_result.needs_reorder ? '⚠️ Low Stock' : '✅ In Stock'}\n`;
+                        } else if (intent === 'list_products') {
+                            console.log("List Products - Checking for products array..."); // Debug
+                            console.log("Has products?", !!action_result.products); // Debug
+                            console.log("Products:", action_result.products); // Debug
+
+                            if (action_result.products && Array.isArray(action_result.products)) {
+                                response += `📦 **Product Inventory List**\n\n`;
+                                action_result.products.forEach((p, idx) => {
+                                    response += `${idx + 1}. **${p.name}**\n`;
+                                    response += `   Stock: ${p.stock} units | Price: ₹${p.price}\n`;
+                                    response += `   Status: ${p.needs_reorder ? '⚠️ Low Stock' : '✅ OK'}\n\n`;
+                                });
+                            } else {
+                                response += `⚠️ Product list data not available (products array missing or invalid)\n`;
+                            }
+                        } else if (intent === 'generate_invoice' && action_result.invoice_id) {
+                            response += `📄 Invoice Generated:\n`;
+                            response += `• Invoice ID: #${action_result.invoice_id}\n`;
+                            response += `• Order ID: #${action_result.order_id}\n`;
+                            response += `• File: ${action_result.file_path.split('\\\\').pop()}\n`;
+                        } else if (intent === 'add_customer' && action_result.customer_id) {
+                            response += `👤 Customer Added:\n`;
+                            response += `• ID: #${action_result.customer_id}\n`;
+                            response += `• Name: ${action_result.customer_name}\n`;
+                            response += `• Phone: ${action_result.phone}\n`;
+                        } else if (intent === 'add_product' && action_result.product_id) {
+                            response += `📦 Product Added:\n`;
+                            response += `• ID: #${action_result.product_id}\n`;
+                            response += `• Name: ${action_result.product_name}\n`;
+                            response += `• Price: ₹${action_result.price}\n`;
+                            response += `• Stock: ${action_result.stock} units\n`;
+                            response += `• Reorder Threshold: ${action_result.reorder_threshold}\n`;
+                        }
+                    } else if (status === 'missing_info') {
+                        response += `⚠️ **${message}**\n\n`;
+                        response += `Missing: ${action_result.missing.join(', ')}\n`;
+                    } else if (status === 'product_not_found' || status === 'customer_not_found') {
+                        response += `❌ **${message}**\n\n`;
+                        if (action_result.available_products) {
+                            response += `Available products:\n`;
+                            action_result.available_products.forEach(p => {
+                                response += `• ${p}\n`;
+                            });
+                        }
+                    } else if (status === 'already_exists') {
+                        response += `⚠️ **${message}**\n\n`;
+                        if (action_result.product_id) {
+                            response += `Existing Product Details:\n`;
+                            response += `• ID: #${action_result.product_id}\n`;
+                            response += `• Stock: ${action_result.current_stock} units\n`;
+                            response += `• Price: ₹${action_result.current_price}\n`;
+                        }
+                    } else if (status === 'insufficient_stock') {
+                        response += `⚠️ **${message}**\n\n`;
+                        response += `• Available: ${action_result.available}\n`;
+                        response += `• Requested: ${action_result.requested}\n`;
+                    } else if (status === 'unknown_intent') {
+                        response += `❓ **${message}**\n\n`;
+                        response += `Try:\n`;
+                        action_result.suggestions.forEach(s => {
+                            response += `• ${s}\n`;
+                        });
+                    } else {
+                        response += message;
+                    }
+                }
+
+                return response;
+            };
+
+            const handleKeyPress = (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            };
+
+            const clearChat = () => {
+                if (confirm('Clear all chat history?')) {
+                    setMessages([{
+                        id: 1,
+                        type: 'ai',
+                        text: 'Chat cleared! How can I help you?',
+                        timestamp: new Date(),
+                    }]);
+                    localStorage.removeItem('chatHistory');
+                }
+            };
+
+            const approveOrder = async (orderId, messageId) => {
+                // Prevent double clicks
+                setMessages(prev => prev.map(m => {
+                    if (m.id === messageId) {
+                        return { ...m, isActionable: false, actionLoading: true };
+                    }
+                    return m;
+                }));
+
+                try {
+                    const res = await fetch(`${API_BASE_URL}/orders/${orderId}/approve`, { method: 'POST' });
+                    if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.detail || "Failed to approve");
+                    }
+
+                    // Success Update
+                    setMessages(prev => prev.map(m => {
+                        if (m.id === messageId) {
+                            return { ...m, text: m.text + '\n\n✅ **Approved**', isActionable: false, actionLoading: false, isApproved: true };
+                        }
+                        return m;
+                    }));
+
+                } catch (e) {
+                    alert("Error approving order: " + e.message);
+                    // Revert state on error
+                    setMessages(prev => prev.map(m => {
+                        if (m.id === messageId) {
+                            return { ...m, isActionable: true, actionLoading: false };
+                        }
+                        return m;
+                    }));
+                }
+            };
+
+            const formatTime = (date) => {
+                return date.toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            };
+
+            return (
+                <div className="flex flex-col h-screen bg-gradient-to-br from-purple-600 via-indigo-600 to-blue-600">
+                    {/* Header */}
+                    <div className="bg-white shadow-lg">
+                        <div className="max-w-4xl mx-auto px-4 py-4">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-3">
+                                    <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xl shadow-lg">
+                                        🎤
+                                    </div>
+                                    <div>
+                                        <h1 className="text-xl font-bold text-gray-800">Udhaar.ai</h1>
+                                        <p className="text-sm text-green-600 flex items-center">
+                                            <span className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
+                                            Voice Enabled
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center space-x-3">
+                                    <a
+                                        href="/dashboard.html"
+                                        className="px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm font-medium"
+                                        title="View Business Dashboard"
+                                    >
+                                        📊 Dashboard
+                                    </a>
+                                    <a
+                                        href="/bill-upload.html"
+                                        className="px-3 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors text-sm font-medium"
+                                        title="Upload Bill for OCR"
+                                    >
+                                        📄 Upload Bill
+                                    </a>
+                                    <button
+                                        onClick={() => setAutoSend(!autoSend)}
+                                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${autoSend
+                                            ? 'bg-green-500 text-white hover:bg-green-600'
+                                            : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+                                            }`}
+                                        title={autoSend ? 'Auto-send ON: Voice messages send automatically' : 'Auto-send OFF: Review before sending'}
+                                    >
+                                        {autoSend ? '🚀 Auto-send' : '✋ Manual'}
+                                    </button>
+                                    <select
+                                        value={language}
+                                        onChange={(e) => setLanguage(e.target.value)}
+                                        className="px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500 text-sm"
+                                    >
+                                        <option value="en-IN">🇮🇳 English</option>
+                                        <option value="hi-IN">🇮🇳 हिंदी (Hindi)</option>
+                                        <option value="en-US">🇺🇸 English (US)</option>
+                                    </select>
+                                    <button
+                                        onClick={clearChat}
+                                        className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors text-sm font-medium"
+                                    >
+                                        Clear
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div >
+
+                    {/* Messages Container */}
+                    < div className="flex-1 overflow-y-auto custom-scrollbar bg-gray-50" >
+                        <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
+                            {messages.map((msg) => (
+                                <div
+                                    key={msg.id}
+                                    className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'} message-bubble`}
+                                >
+                                    <div
+                                        className={`max-w-[75%] rounded-2xl px-4 py-3 shadow-md ${msg.type === 'user'
+                                            ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white'
+                                            : msg.isError
+                                                ? 'bg-red-50 text-red-800 border border-red-200'
+                                                : msg.text.includes('LOW STOCK ALERT')
+                                                    ? 'bg-yellow-50 text-yellow-900 border border-yellow-200 border-l-4 border-l-yellow-500'
+                                                    : 'bg-white text-gray-800'
+                                            }`}
+                                    >
+                                        <div className="whitespace-pre-wrap break-words">
+                                            {msg.text.split('\n').map((line, i) => {
+                                                const parts = line.split('**');
+                                                // Clean up any potential leftover link text
+                                                if (line.includes('[Approve Order]')) return null;
+
+                                                return (
+                                                    <div key={i}>
+                                                        {parts.map((part, j) =>
+                                                            j % 2 === 1 ? <strong key={j}>{part}</strong> : part
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+
+                                            {/* Action Button */}
+                                            {msg.isActionable && msg.actionData && (
+                                                <div className="mt-3">
+                                                    <button
+                                                        onClick={() => approveOrder(msg.actionData.orderId, msg.id)}
+                                                        className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 text-sm font-bold shadow-sm flex items-center"
+                                                    >
+                                                        ✅ Approve Order #{msg.actionData.orderId}
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className={`text-xs mt-2 ${msg.type === 'user' ? 'text-purple-200' : 'text-gray-500'
+                                            }`}>
+                                            {formatTime(msg.timestamp)}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+
+                            {/* Typing Indicator */}
+                            {isTyping && (
+                                <div className="flex justify-start message-bubble">
+                                    <div className="bg-white rounded-2xl px-6 py-4 shadow-md">
+                                        <div className="typing-indicator flex space-x-1">
+                                            <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
+                                            <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
+                                            <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div ref={messagesEndRef} />
+                        </div>
+                    </div >
+
+                    {/* Recording Indicator */}
+                    {
+                        isRecording && (
+                            <div className="bg-red-500 text-white py-3">
+                                <div className="max-w-4xl mx-auto px-4 flex items-center justify-center space-x-3">
+                                    <div className="flex space-x-1">
+                                        <div className="w-1 h-8 bg-white rounded wave-animation" style={{ animationDelay: '0s' }}></div>
+                                        <div className="w-1 h-8 bg-white rounded wave-animation" style={{ animationDelay: '0.1s' }}></div>
+                                        <div className="w-1 h-8 bg-white rounded wave-animation" style={{ animationDelay: '0.2s' }}></div>
+                                        <div className="w-1 h-8 bg-white rounded wave-animation" style={{ animationDelay: '0.3s' }}></div>
+                                        <div className="w-1 h-8 bg-white rounded wave-animation" style={{ animationDelay: '0.4s' }}></div>
+                                    </div>
+                                    <span className="font-medium">🎤 Recording... {transcript && `"${transcript}"`}</span>
+                                </div>
+                            </div>
+                        )
+                    }
+
+                    {/* Input Area */}
+                    <div className="bg-white border-t border-gray-200 shadow-lg">
+                        <div className="max-w-4xl mx-auto px-4 py-4">
+                            <div className="flex items-end space-x-3">
+                                {/* Voice Button */}
+                                <button
+                                    onClick={isRecording ? stopRecording : startRecording}
+                                    disabled={isTranscribing && !isRecording}
+                                    className={`p-4 rounded-full shadow-lg transition-all transform hover:scale-110 ${isRecording
+                                        ? 'bg-red-500 hover:bg-red-600 recording-pulse'
+                                        : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700'
+                                        } text-white disabled:opacity-50 disabled:cursor-not-allowed`}
+                                    title={isRecording ? 'Stop Recording' : 'Start Voice Recording'}
+                                >
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                                        {isRecording ? (
+                                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clipRule="evenodd" />
+                                        ) : (
+                                            <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+                                        )}
+                                    </svg>
+                                </button>
+
+                                {/* Text Input */}
+                                <div className="flex-1 relative">
+                                    <textarea
+                                        ref={inputRef}
+                                        value={inputText}
+                                        onChange={(e) => setInputText(e.target.value)}
+                                        onKeyPress={handleKeyPress}
+                                        placeholder="Type or click 🎤 to speak... (e.g., 'Order 2 laptops for Alice')"
+                                        className="w-full px-4 py-3 pr-12 border-2 border-gray-300 rounded-2xl focus:outline-none focus:border-purple-500 resize-none transition-colors"
+                                        rows="1"
+                                        style={{ minHeight: '50px', maxHeight: '150px' }}
+                                    />
+                                </div>
+
+                                {/* Send Button */}
+                                <button
+                                    onClick={() => sendMessage()}
+                                    disabled={!inputText.trim() || isTyping}
+                                    className="px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-2xl hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium shadow-lg hover:shadow-xl transform hover:scale-105"
+                                >
+                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                                    </svg>
+                                </button>
+                            </div>
+                            <div className="mt-2 text-xs text-gray-500 text-center">
+                                {autoSend
+                                    ? '🚀 Auto-send ON: Voice messages send automatically • Click ✋ Manual to review first'
+                                    : '✋ Manual mode: Review voice messages before sending • Click 🚀 Auto-send for instant send'
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div >
+            );
+        }
+
+        ReactDOM.render(<VoiceToOrderApp />, document.getElementById('root'));
+    </script>
+</body>
+
+</html>
