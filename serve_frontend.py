@@ -11,6 +11,15 @@ DIRECTORY = "frontend"
 class MyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=DIRECTORY, **kwargs)
+
+    def do_GET(self):
+        # Handle /customer route specifically or similar clean URLs
+        if self.path == '/customer':
+            self.path = '/chat_onboarding.html'
+        elif self.path == '/':
+            self.path = '/index.html'
+        
+        return super().do_GET()
     
     def end_headers(self):
         # Add CORS headers

@@ -274,19 +274,28 @@
                                 </p>
                             </div>
                         </div>
-                        {customer && (
-                            <button
-                                onClick={() => {
-                                    if (confirm("Logout?")) {
-                                        localStorage.removeItem('udhaar_customer');
-                                        window.location.reload();
-                                    }
-                                }}
-                                className="text-xs bg-blue-700 px-3 py-1 rounded hover:bg-blue-800 transition"
+                        <div className="flex items-center gap-2">
+                            {customer && (
+                                <button
+                                    onClick={() => {
+                                        if (confirm("Logout?")) {
+                                            localStorage.removeItem('udhaar_customer');
+                                            window.location.reload();
+                                        }
+                                    }}
+                                    className="text-xs bg-blue-700 px-3 py-1 rounded hover:bg-blue-800 transition"
+                                >
+                                    Logout
+                                </button>
+                            )}
+                            <a
+                                href="/"
+                                className="text-xs border border-blue-400 px-3 py-1 rounded hover:bg-blue-700 transition"
+                                title="Go to Vendor Interface"
                             >
-                                Logout
-                            </button>
-                        )}
+                                Vendor ⇠
+                            </a>
+                        </div>
                     </div>
 
                     {/* Chat Area */}

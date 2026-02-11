@@ -116,9 +116,11 @@ class AIAgentEngine:
                     score += 1
             intent_scores[intent_name] = score
         
-        # Special rule: If "add" or "new" + "product" + "price" detected, strongly favor add_product
-        if ("add" in text_lower or "new" in text_lower or "create" in text_lower) and \
-           "product" in text_lower and ("price" in text_lower or "stock" in text_lower):
+        # Special rule for add_product: If "add" or "new" (or Hinglish variants) is present with "price" or "stock", 
+        # and it's not a customer/order action, strongly favor add_product
+        if any(k in text_lower for k in ["add", "new", "create", "naaya", "nava", "banao", "dalo"]) and \
+           any(k in text_lower for k in ["price", "stock", "cost", "rate", "daam", "bharti"]) and \
+           not any(k in text_lower for k in ["customer", "order", "bill", "invoice"]):
             intent_scores["add_product"] = intent_scores.get("add_product", 0) + 10
         
         # Get best intent

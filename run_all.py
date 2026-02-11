@@ -26,8 +26,9 @@ def main():
         cwd=os.getcwd()
     )
     
-    print("\n✅ Both servers started!")
-    print("📝 Frontend: http://localhost:3000")
+    print("\n✅ All services started!")
+    print("📝 Vendor:   http://localhost:3000")
+    print("📝 Customer: http://localhost:3000/customer")
     print("📝 Backend:  http://localhost:8000")
     print("\n⚠️  Press Ctrl+C to stop all servers\n")
     
