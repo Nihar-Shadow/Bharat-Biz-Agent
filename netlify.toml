@@ -1,0 +1,9 @@
+[build]
+  publish = "frontend/"
+
+[[redirects]]
+  from = "/customer"
+  to = "/chat_onboarding.html"
+  status = 200
+
+# Support for other routes if needed, but primarily we want /customer mapping
