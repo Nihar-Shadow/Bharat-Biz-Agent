@@ -14,6 +14,7 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     supervisor \
+    curl \
     tesseract-ocr \
     tesseract-ocr-eng \
     tesseract-ocr-hin \
@@ -58,6 +59,10 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 # -----------------------------------------------------
 # Expose HTTP port
 EXPOSE 80
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost/ || exit 1
 
 # Start Supervisor (Runs Nginx + Uvicorn)
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
