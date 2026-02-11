@@ -41,6 +41,7 @@
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
         }
     </style>
+    <script src="config.js"></script>
 </head>
 
 <body class="bg-gray-50">
@@ -49,7 +50,7 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        const API_BASE_URL = 'http://localhost:8000/api/v1';
+        const API_BASE_URL = window.APP_CONFIG.API_BASE_URL;
 
         function Dashboard() {
             const [stats, setStats] = useState({ total_revenue: 0, total_orders: 0, total_customers: 0, low_stock_count: 0 });

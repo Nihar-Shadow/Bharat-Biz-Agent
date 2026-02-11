@@ -46,6 +46,7 @@
             }
         }
     </style>
+    <script src="config.js"></script>
 </head>
 
 <body class="bg-gray-50">
@@ -203,7 +204,7 @@
     </div>
 
     <script>
-        const API_BASE_URL = 'http://localhost:8000/api/v1';
+        const API_BASE_URL = window.APP_CONFIG.API_BASE_URL;
         let allProducts = [];
 
         // Load products on page load
